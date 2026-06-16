@@ -13,8 +13,10 @@ function formatFecha(iso) {
 function App() {
   const [usuarioEmail, setUsuarioEmail] = useState('');
   const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
   const [esJefe, setEsJefe] = useState(false);
   const [grupoJefe, setGrupoJefe] = useState(null);
+  const [autenticado, setAutenticado] = useState(false);
   
   const [tab, setTab] = useState('CARGA'); // CARGA | HORAS | JEFATURA
   
@@ -51,19 +53,19 @@ function App() {
   const [tareaDetalle, setTareaDetalle] = useState(null);
 
   useEffect(() => {
-    if (usuarioEmail) {
+    if (autenticado && usuarioEmail) {
       verificarPerfil();
       cargarDatos();
       cargarHoras();
     }
-  }, [usuarioEmail]);
+  }, [autenticado, usuarioEmail]);
 
   useEffect(() => {
-    if (usuarioEmail) {
+    if (autenticado && usuarioEmail) {
       if (tab === 'HORAS') cargarHoras();
       if (tab === 'JEFATURA' && esJefe) cargarPendientesJefatura();
     }
-  }, [anioSeleccionado, mesSeleccionado, quincenaSeleccionada, tab, usuarioEmail, esJefe]);
+  }, [anioSeleccionado, mesSeleccionado, quincenaSeleccionada, tab, usuarioEmail, esJefe, autenticado]);
 
   const verificarPerfil = () => {
     axios.get(`${API}/auth/perfil?email=${usuarioEmail}`)
@@ -71,7 +73,11 @@ function App() {
         setEsJefe(r.data.esJefe);
         setGrupoJefe(r.data.grupo);
       })
-      .catch(e => console.error('Error perfil:', e));
+      .catch(e => {
+        console.error('Error perfil:', e);
+        setEsJefe(false);
+        setGrupoJefe(null);
+      });
   };
 
   const cargarDatos = () => {
@@ -101,17 +107,39 @@ function App() {
       }).catch(e => console.error(e));
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    if (emailInput.trim() !== '') setUsuarioEmail(emailInput.trim().toLowerCase());
+    const email = emailInput.trim().toLowerCase();
+    const password = passwordInput;
+    if (!email || !password) {
+      setMensaje({ tipo: 'error', texto: '✗ Completa email y contraseña' });
+      setTimeout(() => setMensaje(null), 5000);
+      return;
+    }
+
+    try {
+      const response = await axios.post(`${API}/auth/login`, { email, password });
+      setUsuarioEmail(response.data.email || email);
+      setEsJefe(response.data.esJefe || false);
+      setGrupoJefe(response.data.grupo || null);
+      setAutenticado(true);
+      setEmailInput('');
+      setPasswordInput('');
+    } catch (err) {
+      const message = err.response?.data?.error || 'Error al iniciar sesión';
+      setMensaje({ tipo: 'error', texto: `✗ ${message}` });
+      setTimeout(() => setMensaje(null), 5000);
+    }
   };
 
   const handleLogout = () => {
     setUsuarioEmail('');
     setEmailInput('');
+    setAutenticado(false);
     setReportes([]);
     setResumenHoras(null);
     setEsJefe(false);
+    setGrupoJefe(null);
     setTab('CARGA');
   };
 
@@ -264,7 +292,7 @@ function App() {
       return (det.tareasElegidas || '').toString().trim() !== '' && (parseFloat(det.horas) || 0) > 0;
     });
 
-  if (!usuarioEmail) {
+  if (!autenticado) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4" style={{background: 'linear-gradient(135deg, #1a1f2e 0%, #2d3748 50%, #111827 100%)'}}>
         <div className="absolute top-0 left-0 w-96 h-96 rounded-full opacity-10" style={{backgroundColor: '#eeb537', filter: 'blur(60px)'}}></div>
@@ -275,11 +303,17 @@ function App() {
           </div>
           <h1 className="text-center text-3xl font-black" style={{color: '#111827'}}>SER&TEC</h1>
           <h2 className="text-center text-lg font-semibold text-slate-600 mt-1">Sistema de Tareas</h2>
-          <p className="text-slate-500 text-sm text-center mt-4 mb-6">Ingresá tu correo electrónico para continuar.</p>
+          <p className="text-slate-500 text-sm text-center mt-4 mb-6">Ingresá tu correo electrónico y contraseña según la tabla <code>usuarios</code>.</p>
           <form onSubmit={handleLogin} className="space-y-4">
             <input
               type="email" required placeholder="Ej: tu-email@gmail.com"
               value={emailInput} onChange={e => setEmailInput(e.target.value)}
+              className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:outline-none transition bg-slate-50"
+              style={{focusColor: '#eeb537', focusRingColor: '#eeb537'}}
+            />
+            <input
+              type="password" required placeholder="Contraseña"
+              value={passwordInput} onChange={e => setPasswordInput(e.target.value)}
               className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:outline-none transition bg-slate-50"
               style={{focusColor: '#eeb537', focusRingColor: '#eeb537'}}
             />
@@ -1021,6 +1055,17 @@ function App() {
                       <p className="text-xs uppercase tracking-wide text-slate-500">Contrato</p>
                       <p className="mt-1 font-semibold text-slate-700">{r.contrato}</p>
                     </div>
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                      <p className="font-semibold text-slate-700 mb-2">Contexto completo de horas</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['K2','K5','K6','K8','K9','K10','K11','K12','OTROS'].map((c) => (
+                          <div key={c} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 border border-slate-200">
+                            <span className="font-semibold text-slate-700 text-[11px]">{c}</span>
+                            <span className="text-slate-500 text-[11px]">{r[`horas_${c.toLowerCase()}`] || 0} hs</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                     <div className="mt-4 grid gap-3">
                       {contratosAMostrar.map(c => renderInputHora(c))}
                     </div>
@@ -1044,6 +1089,7 @@ function App() {
                     <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Fecha</th>
                     <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Cargado Por</th>
                     <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Contratos</th>
+                    <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Contexto de horas</th>
                     <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Horas (Tu Grupo)</th>
                     <th className="px-5 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Acción</th>
                   </tr>
@@ -1085,6 +1131,16 @@ function App() {
                         <td className="px-5 py-4 text-slate-700 font-medium whitespace-nowrap">{formatFecha(r.dia)}</td>
                         <td className="px-5 py-4 text-slate-600">{r.operario_email}</td>
                         <td className="px-5 py-4 font-bold text-blue-700">{r.contrato}</td>
+                        <td className="px-5 py-4 text-slate-600 text-[12px]">
+                          <div className="grid grid-cols-2 gap-2">
+                            {['K2','K5','K6','K8','K9','K10','K11','K12','OTROS'].map((c) => (
+                              <div key={c} className="rounded-lg bg-slate-50 border border-slate-200 px-2 py-1 text-[11px] flex items-center justify-between">
+                                <span className="font-semibold text-slate-700">{c}</span>
+                                <span className="text-slate-500">{r[`horas_${c.toLowerCase()}`] || 0}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
                         <td className="px-5 py-4">
                           <div className="flex flex-col gap-1">
                             {contratosAMostrar.map(c => renderInputHora(c))}
