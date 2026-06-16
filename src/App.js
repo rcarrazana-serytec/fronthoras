@@ -4,6 +4,27 @@ import Select from 'react-select';
 
 const API = process.env.REACT_APP_API_URL || `http://${window.location.hostname}:3001`;
 
+// Configurar interceptor axios para agregar token en todas las requests
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+}, (error) => Promise.reject(error));
+
+// Manejar respuestas 401 (token expirado)
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      window.location.href = window.location.pathname;
+    }
+    return Promise.reject(error);
+  }
+);
+
 function formatFecha(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -17,6 +38,9 @@ function App() {
   const [esJefe, setEsJefe] = useState(false);
   const [grupoJefe, setGrupoJefe] = useState(null);
   const [autenticado, setAutenticado] = useState(false);
+  const [errorLogin, setErrorLogin] = useState('');
+  const [contratosUsuario, setContratosUsuario] = useState('');
+  const [rolUsuario, setRolUsuario] = useState('');
   
   const [tab, setTab] = useState('CARGA'); // CARGA | HORAS | JEFATURA
   
@@ -48,9 +72,30 @@ function App() {
   // Jefatura
   const [pendientesJefatura, setPendientesJefatura] = useState([]);
   const [correccionesJefatura, setCorreccionesJefatura] = useState({});
+  const [mesesDisponibles, setMesesDisponibles] = useState([]);
+  const [mesSeleccionadoJefatura, setMesSeleccionadoJefatura] = useState(null);
+  const [paginaJefatura, setPaginaJefatura] = useState(1);
+  const [paginacionJefatura, setPaginacionJefatura] = useState({ total: 0, totalPages: 0 });
 
   // Detalle Modal
   const [tareaDetalle, setTareaDetalle] = useState(null);
+
+  // Al montar, verifica si hay sesión activa en localStorage
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const email = localStorage.getItem('usuarioEmail');
+    if (token && email) {
+      setUsuarioEmail(email);
+      setAutenticado(true);
+      // Verificar datos actuales desde el servidor
+      axios.get(`${API}/auth/perfil`)
+        .then(r => {
+          setEsJefe(r.data.esJefe);
+          setGrupoJefe(r.data.grupo);
+        })
+        .catch(e => console.error('Error actualizando perfil:', e));
+    }
+  }, []);
 
   useEffect(() => {
     if (autenticado && usuarioEmail) {
@@ -63,12 +108,27 @@ function App() {
   useEffect(() => {
     if (autenticado && usuarioEmail) {
       if (tab === 'HORAS') cargarHoras();
-      if (tab === 'JEFATURA' && esJefe) cargarPendientesJefatura();
+      if (tab === 'JEFATURA' && esJefe) {
+        cargarMesesDisponibles();
+      }
     }
-  }, [anioSeleccionado, mesSeleccionado, quincenaSeleccionada, tab, usuarioEmail, esJefe, autenticado]);
+  }, [tab, usuarioEmail, esJefe, autenticado]);
+
+  useEffect(() => {
+    if (tab === 'JEFATURA' && esJefe && mesSeleccionadoJefatura) {
+      setPaginaJefatura(1);
+      cargarPendientesJefatura(mesSeleccionadoJefatura, 1);
+    }
+  }, [mesSeleccionadoJefatura]);
+
+  useEffect(() => {
+    if (tab === 'JEFATURA' && esJefe && mesSeleccionadoJefatura && paginaJefatura > 1) {
+      cargarPendientesJefatura(mesSeleccionadoJefatura, paginaJefatura);
+    }
+  }, [paginaJefatura]);
 
   const verificarPerfil = () => {
-    axios.get(`${API}/auth/perfil?email=${usuarioEmail}`)
+    axios.get(`${API}/auth/perfil`)
       .then(r => {
         setEsJefe(r.data.esJefe);
         setGrupoJefe(r.data.grupo);
@@ -83,21 +143,38 @@ function App() {
   const cargarDatos = () => {
     axios.get(`${API}/catalogos`).then(r => setCatalogos(r.data)).catch(e => console.error(e));
     axios.get(`${API}/contratos-tareas`).then(r => setContratosDisponibles(r.data)).catch(e => console.error(e));
-    axios.get(`${API}/reporte-completo?email=${usuarioEmail}`).then(r => setReportes(r.data)).catch(e => console.error(e));
+    axios.get(`${API}/reporte-completo`).then(r => setReportes(r.data)).catch(e => console.error(e));
   };
 
   const cargarHoras = () => {
-    axios.get(`${API}/reporte-horas?email=${usuarioEmail}&anio=${anioSeleccionado}&mes=${mesSeleccionado}&quincena=${quincenaSeleccionada}`)
+    axios.get(`${API}/reporte-horas?anio=${anioSeleccionado}&mes=${mesSeleccionado}&quincena=${quincenaSeleccionada}`)
       .then(r => setResumenHoras(r.data)).catch(e => console.error(e));
   };
 
-  const cargarPendientesJefatura = () => {
-    axios.get(`${API}/jefatura/pendientes?email=${usuarioEmail}`)
+  const cargarMesesDisponibles = () => {
+    axios.get(`${API}/jefatura/meses`)
       .then(r => {
-        setPendientesJefatura(r.data);
+        setMesesDisponibles(r.data || []);
+        // Seleccionar automáticamente el primer mes disponible
+        if (r.data && r.data.length > 0) {
+          setMesSeleccionadoJefatura(r.data[0].mes);
+        }
+      }).catch(e => console.error('Error cargando meses:', e));
+  };
+
+  const cargarPendientesJefatura = (mes = null, page = 1) => {
+    const mesParam = mes || mesSeleccionadoJefatura;
+    const url = `${API}/jefatura/pendientes?page=${page}${mesParam ? `&mes=${mesParam}` : ''}`;
+
+    axios.get(url)
+      .then(r => {
+        const { data, pagination } = r.data;
+        setPendientesJefatura(data || []);
+        setPaginacionJefatura(pagination || { total: 0, totalPages: 0 });
+
         // Inicializar estado de correcciones con las horas actuales
         const ini = {};
-        r.data.forEach(t => {
+        (data || []).forEach(t => {
           ini[t.id] = {
             K2: t.horas_k2||0, K5: t.horas_k5||0, K6: t.horas_k6||0, K8: t.horas_k8||0,
             K9: t.horas_k9||0, K10: t.horas_k10||0, K11: t.horas_k11||0, K12: t.horas_k12||0, OTROS: t.horas_otros||0
@@ -109,30 +186,43 @@ function App() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setErrorLogin('');
     const email = emailInput.trim().toLowerCase();
     const password = passwordInput;
     if (!email || !password) {
-      setMensaje({ tipo: 'error', texto: '✗ Completa email y contraseña' });
-      setTimeout(() => setMensaje(null), 5000);
+      setErrorLogin('Completa email y contraseña');
       return;
     }
 
     try {
       const response = await axios.post(`${API}/auth/login`, { email, password });
-      setUsuarioEmail(response.data.email || email);
-      setEsJefe(response.data.esJefe || false);
-      setGrupoJefe(response.data.grupo || null);
+      const { token, email: respEmail, esJefe: respEsJefe, grupo: respGrupo, contratos: respContratos, rol: respRol } = response.data;
+
+      // Guardar token y email en localStorage
+      localStorage.setItem('token', token);
+      localStorage.setItem('usuarioEmail', respEmail);
+
+      setUsuarioEmail(respEmail);
+      setEsJefe(respEsJefe || false);
+      setGrupoJefe(respGrupo || null);
+      setContratosUsuario(respContratos || '');
+      setRolUsuario(respRol || '');
       setAutenticado(true);
       setEmailInput('');
       setPasswordInput('');
+      setErrorLogin('');
     } catch (err) {
+      console.error('Error login:', err);
       const message = err.response?.data?.error || 'Error al iniciar sesión';
-      setMensaje({ tipo: 'error', texto: `✗ ${message}` });
-      setTimeout(() => setMensaje(null), 5000);
+      setErrorLogin(message);
     }
   };
 
   const handleLogout = () => {
+    // Limpiar localStorage
+    localStorage.removeItem('token');
+    localStorage.removeItem('usuarioEmail');
+
     setUsuarioEmail('');
     setEmailInput('');
     setAutenticado(false);
@@ -215,7 +305,7 @@ function App() {
       });
 
       const r = await axios.post(`${API}/guardar-tarea`, {
-        email: usuarioEmail, dia, provincia, moviles, operarios_cuil: operariosCuil,
+        dia, provincia, moviles, operarios_cuil: operariosCuil,
         observaciones, contrato: contratosElegidos.join(','), contratos_data: contratosData
       });
 
@@ -239,7 +329,7 @@ function App() {
 
   const handleValidarTarea = async (tareaId, accion) => {
     try {
-      const payload = { email: usuarioEmail, tarea_id: tareaId, accion };
+      const payload = { tarea_id: tareaId, accion };
       if (accion === 'APROBADO') {
         payload.horas_corregidas = correccionesJefatura[tareaId];
       }
@@ -255,7 +345,7 @@ function App() {
   const handleEliminar = async (id) => {
     if (!window.confirm('¿Seguro que querés eliminar este registro?')) return;
     try {
-      await axios.delete(`${API}/eliminar-tarea/${id}?email=${usuarioEmail}`);
+      await axios.delete(`${API}/eliminar-tarea/${id}`);
       setMensaje({ tipo: 'ok', texto: '✓ Registro eliminado' });
       cargarDatos();
       if (tab === 'HORAS') cargarHoras();
@@ -268,6 +358,20 @@ function App() {
   const getTareasOpts = (contratoNombre) => {
     const found = contratosDisponibles.find(c => c.contrato === contratoNombre);
     return found ? found.tareas.map(t => ({ value: t.id, label: t.tarea })) : [];
+  };
+
+  const getContratosFiltraados = () => {
+    const orden = ['K2', 'K5', 'K6', 'K8', 'K9', 'K10', 'K11', 'K12', 'OTROS'];
+    const contratosDelUsuario = contratosUsuario ? contratosUsuario.split(',').map(c => c.trim().toUpperCase()) : [];
+
+    // Si el usuario tiene contratos asignados, filtrar; si no, mostrar todos
+    let filtrados = contratosDisponibles;
+    if (contratosDelUsuario.length > 0) {
+      filtrados = contratosDisponibles.filter(c => contratosDelUsuario.includes(c.contrato));
+    }
+
+    // Ordenar según el orden definido
+    return filtrados.sort((a, b) => orden.indexOf(a.contrato) - orden.indexOf(b.contrato));
   };
 
   const filtradosReportes = reportes.filter(r => {
@@ -304,6 +408,11 @@ function App() {
           <h1 className="text-center text-3xl font-black" style={{color: '#111827'}}>SER&TEC</h1>
           <h2 className="text-center text-lg font-semibold text-slate-600 mt-1">Sistema de Tareas</h2>
           <p className="text-slate-500 text-sm text-center mt-4 mb-6">Ingresá tu correo electrónico y contraseña según la tabla <code>usuarios</code>.</p>
+          {errorLogin && (
+            <div className="bg-red-50 border-2 border-red-400 rounded-lg p-4 mb-6 text-red-700 font-bold text-center animate-pulse">
+              ❌ {errorLogin}
+            </div>
+          )}
           <form onSubmit={handleLogin} className="space-y-4">
             <input
               type="email" required placeholder="Ej: tu-email@gmail.com"
@@ -378,16 +487,18 @@ function App() {
             </svg>
             Carga de Tareas
           </button>
-          <button
-            onClick={() => setTab('HORAS')}
-            className={`py-4 px-6 text-sm font-bold border-b-4 transition-all whitespace-nowrap flex items-center gap-2 ${tab === 'HORAS' ? 'text-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
-            style={{borderBottomColor: tab === 'HORAS' ? '#eeb537' : 'transparent', backgroundColor: tab === 'HORAS' ? '#f5f3ff' : 'transparent', color: tab === 'HORAS' ? '#eeb537' : undefined}}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            Mis Horas
-          </button>
+          {rolUsuario !== 'operario' && (
+            <button
+              onClick={() => setTab('HORAS')}
+              className={`py-4 px-6 text-sm font-bold border-b-4 transition-all whitespace-nowrap flex items-center gap-2 ${tab === 'HORAS' ? 'text-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              style={{borderBottomColor: tab === 'HORAS' ? '#eeb537' : 'transparent', backgroundColor: tab === 'HORAS' ? '#f5f3ff' : 'transparent', color: tab === 'HORAS' ? '#eeb537' : undefined}}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Mis Horas
+            </button>
+          )}
           {esJefe && (
             <button
               onClick={() => setTab('JEFATURA')}
@@ -411,7 +522,7 @@ function App() {
             className="w-full border-2 border-slate-300 rounded-lg px-4 py-3 text-sm text-slate-700 bg-white font-semibold focus:ring-2 focus:ring-yellow-400 outline-none"
           >
             <option value="CARGA">📝 Carga de Tareas</option>
-            <option value="HORAS">📅 Mis Horas por Quincena</option>
+            {rolUsuario !== 'operario' && <option value="HORAS">📅 Mis Horas por Quincena</option>}
             {esJefe && <option value="JEFATURA">✓ Validación Jefatura</option>}
           </select>
         </div>
@@ -490,7 +601,7 @@ function App() {
                     <p className="text-sm text-slate-400">Cargando contratos...</p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {contratosDisponibles.map(c => {
+                      {getContratosFiltraados().map(c => {
                         const activo = contratosElegidos.includes(c.contrato);
                         return (
                           <button
@@ -1004,7 +1115,23 @@ function App() {
                 {pendientesJefatura.length} PENDIENTES
               </span>
             </div>
-            
+
+            <div className="border-b border-amber-100 px-6 py-4">
+              <div className="flex items-center gap-4">
+                <label className="text-sm font-semibold text-slate-700">Seleccionar período:</label>
+                <select
+                  value={mesSeleccionadoJefatura || ''}
+                  onChange={(e) => setMesSeleccionadoJefatura(e.target.value)}
+                  className="px-4 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none text-sm"
+                >
+                  <option value="">Cargando meses...</option>
+                  {mesesDisponibles.map(m => (
+                    <option key={m.mes} value={m.mes}>{m.mes_nombre} ({m.cantidad} tareas)</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="sm:hidden space-y-4 p-4">
               {pendientesJefatura.length === 0 ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center text-amber-700">
@@ -1162,6 +1289,31 @@ function App() {
                 </tbody>
               </table>
             </div>
+
+            {/* Paginación */}
+            {paginacionJefatura.totalPages > 1 && (
+              <div className="border-t border-amber-100 px-6 py-4 flex justify-between items-center">
+                <span className="text-sm text-slate-600">
+                  Página {paginaJefatura} de {paginacionJefatura.totalPages} ({paginacionJefatura.total} tareas)
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    disabled={paginaJefatura === 1}
+                    onClick={() => setPaginaJefatura(paginaJefatura - 1)}
+                    className="px-4 py-2 bg-amber-100 text-amber-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-600 hover:text-white font-semibold text-sm transition"
+                  >
+                    ← Anterior
+                  </button>
+                  <button
+                    disabled={!paginacionJefatura.hasNext}
+                    onClick={() => setPaginaJefatura(paginaJefatura + 1)}
+                    className="px-4 py-2 bg-amber-100 text-amber-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-600 hover:text-white font-semibold text-sm transition"
+                  >
+                    Siguiente →
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
