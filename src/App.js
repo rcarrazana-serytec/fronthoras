@@ -27,6 +27,7 @@ function App() {
   const [provincia, setProvincia] = useState('');
   const [moviles, setMoviles] = useState('');
   const [operariosCuil, setOperariosCuil] = useState('');
+  const [observaciones, setObservaciones] = useState('');
 
   // Contratos seleccionados (multi)
   const [contratosElegidos, setContratosElegidos] = useState([]);
@@ -136,6 +137,16 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     // Validaciones antes de enviar
+    if (provincia === '') {
+      setMensaje({ tipo: 'error', texto: '✗ Seleccioná una provincia' });
+      setTimeout(() => setMensaje(null), 4000);
+      return;
+    }
+    if (moviles === '') {
+      setMensaje({ tipo: 'error', texto: '✗ Seleccioná al menos un vehículo' });
+      setTimeout(() => setMensaje(null), 4000);
+      return;
+    }
     if (contratosElegidos.length === 0) {
       setMensaje({ tipo: 'error', texto: '✗ Seleccioná al menos un contrato' });
       setTimeout(() => setMensaje(null), 4000);
@@ -177,7 +188,7 @@ function App() {
 
       const r = await axios.post(`${API}/guardar-tarea`, {
         email: usuarioEmail, dia, provincia, moviles, operarios_cuil: operariosCuil,
-        contrato: contratosElegidos.join(','), contratos_data: contratosData
+        observaciones, contrato: contratosElegidos.join(','), contratos_data: contratosData
       });
 
       if (r.data.alerta) {
@@ -187,7 +198,7 @@ function App() {
       }
       
       setDia(new Date().toISOString().split('T')[0]);
-      setProvincia(''); setMoviles(''); setOperariosCuil('');
+      setProvincia(''); setMoviles(''); setOperariosCuil(''); setObservaciones('');
       setContratosElegidos([]); setDetalles({});
       cargarDatos();
     } catch (err) {
@@ -243,10 +254,15 @@ function App() {
 
   // Validaciones derivadas del formulario
   const totalHorasForm = Object.values(detalles).reduce((sum, d) => sum + (parseFloat(d.horas) || 0), 0);
-  const formValido = contratosElegidos.length > 0 && (operariosCuil || '').toString().trim() !== '' && totalHorasForm > 0 && contratosElegidos.every(k => {
-    const det = detalles[k] || {};
-    return (det.tareasElegidas || '').toString().trim() !== '' && (parseFloat(det.horas) || 0) > 0;
-  });
+  const formValido = contratosElegidos.length > 0 &&
+    provincia !== '' &&
+    moviles !== '' &&
+    (operariosCuil || '').toString().trim() !== '' &&
+    totalHorasForm > 0 &&
+    contratosElegidos.every(k => {
+      const det = detalles[k] || {};
+      return (det.tareasElegidas || '').toString().trim() !== '' && (parseFloat(det.horas) || 0) > 0;
+    });
 
   if (!usuarioEmail) {
     return (
@@ -507,9 +523,25 @@ function App() {
                         </div>
                       ) : <div className="flex-1"></div>}
                       
-                      <button type="submit" disabled={!formValido || guardando} className="disabled:opacity-60 text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-colors flex-shrink-0 w-full sm:w-auto hover:shadow-lg" style={{backgroundColor: '#eeb537'}}>
-                        {guardando ? 'Guardando...' : 'Guardar Tarea'}
-                      </button>
+                      <div className="w-full">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Observaciones</label>
+                        <textarea
+                          value={observaciones}
+                          onChange={e => setObservaciones(e.target.value)}
+                          rows={3}
+                          placeholder="Ingresá cualquier detalle adicional..."
+                          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 resize-none"
+                        />
+                      </div>
+                      {formValido ? (
+                        <button type="submit" className="text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-colors flex-shrink-0 w-full sm:w-auto hover:shadow-lg" style={{backgroundColor: '#eeb537'}}>
+                          {guardando ? 'Guardando...' : 'Guardar Tarea'}
+                        </button>
+                      ) : (
+                        <div className="w-full text-sm text-slate-500 px-4 py-3 rounded-lg border border-dashed border-slate-200 bg-slate-50">
+                          Completa todos los campos obligatorios para habilitar Guardar.
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
