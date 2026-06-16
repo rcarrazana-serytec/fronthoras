@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import Select from 'react-select';
 
-const API = 'http://localhost:3001';
+const API = process.env.REACT_APP_API_URL || `http://${window.location.hostname}:3001`;
 
 function formatFecha(iso) {
   if (!iso) return '';
@@ -40,6 +40,7 @@ function App() {
   const [mesSeleccionado, setMesSeleccionado] = useState(new Date().getMonth() + 1);
   const [quincenaSeleccionada, setQuincenaSeleccionada] = useState(new Date().getDate() <= 15 ? 1 : 2);
   const [resumenHoras, setResumenHoras] = useState(null);
+  const [feriadosQ, setFeriadosQ] = useState({}); // { "2026-06-15": true }
 
   // Jefatura
   const [pendientesJefatura, setPendientesJefatura] = useState([]);
@@ -134,10 +135,37 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // Validaciones antes de enviar
     if (contratosElegidos.length === 0) {
       setMensaje({ tipo: 'error', texto: '✗ Seleccioná al menos un contrato' });
       setTimeout(() => setMensaje(null), 4000);
       return;
+    }
+    if ((operariosCuil || '').toString().trim() === '') {
+      setMensaje({ tipo: 'error', texto: '✗ Seleccioná al menos un operario' });
+      setTimeout(() => setMensaje(null), 4000);
+      return;
+    }
+
+    const totalHoras = Object.values(detalles).reduce((sum, d) => sum + (parseFloat(d.horas) || 0), 0);
+    if (totalHoras <= 0) {
+      setMensaje({ tipo: 'error', texto: '✗ No podés guardar una tarea con 0 horas' });
+      setTimeout(() => setMensaje(null), 4000);
+      return;
+    }
+
+    for (const k of contratosElegidos) {
+      const det = detalles[k] || {};
+      if (!(det.tareasElegidas || '').toString().trim()) {
+        setMensaje({ tipo: 'error', texto: `✗ Completá las tareas para el contrato ${k}` });
+        setTimeout(() => setMensaje(null), 4000);
+        return;
+      }
+      if (!((parseFloat(det.horas) || 0) > 0)) {
+        setMensaje({ tipo: 'error', texto: `✗ Ingresá horas mayores a 0 para el contrato ${k}` });
+        setTimeout(() => setMensaje(null), 4000);
+        return;
+      }
     }
 
     setGuardando(true);
@@ -203,27 +231,47 @@ function App() {
     return found ? found.tareas.map(t => ({ value: t.id, label: t.tarea })) : [];
   };
 
+  const filtradosReportes = reportes.filter(r => {
+    if (!r.dia) return false;
+    const fechaStr = r.dia.split('T')[0];
+    const [y, m, dNum] = fechaStr.split('-');
+    const q = parseInt(dNum, 10) <= 15 ? 1 : 2;
+    return parseInt(y, 10) === parseInt(anioSeleccionado, 10)
+      && parseInt(m, 10) === parseInt(mesSeleccionado, 10)
+      && q === parseInt(quincenaSeleccionada, 10);
+  });
+
+  // Validaciones derivadas del formulario
+  const totalHorasForm = Object.values(detalles).reduce((sum, d) => sum + (parseFloat(d.horas) || 0), 0);
+  const formValido = contratosElegidos.length > 0 && (operariosCuil || '').toString().trim() !== '' && totalHorasForm > 0 && contratosElegidos.every(k => {
+    const det = detalles[k] || {};
+    return (det.tareasElegidas || '').toString().trim() !== '' && (parseFloat(det.horas) || 0) > 0;
+  });
+
   if (!usuarioEmail) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-lg max-w-md w-full">
-          <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center mb-4 text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
+      <div className="min-h-screen flex items-center justify-center p-4" style={{background: 'linear-gradient(135deg, #1a1f2e 0%, #2d3748 50%, #111827 100%)'}}>
+        <div className="absolute top-0 left-0 w-96 h-96 rounded-full opacity-10" style={{backgroundColor: '#eeb537', filter: 'blur(60px)'}}></div>
+        <div className="absolute bottom-0 right-0 w-96 h-96 rounded-full opacity-10" style={{backgroundColor: '#eeb537', filter: 'blur(60px)'}}></div>
+        <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-md w-full relative z-10 border border-slate-100">
+          <div className="flex justify-center mb-6">
+            <img src="/sertec-logotipo.png" alt="SER&TEC" className="h-16 w-16 rounded-full shadow-lg" style={{boxShadow: '0 0 20px rgba(238, 181, 55, 0.3)'}} />
           </div>
-          <h2 className="text-2xl font-bold text-slate-800">Iniciar Sesión</h2>
-          <p className="text-slate-500 text-sm mb-6">Ingresá tu correo electrónico para continuar.</p>
+          <h1 className="text-center text-3xl font-black" style={{color: '#111827'}}>SER&TEC</h1>
+          <h2 className="text-center text-lg font-semibold text-slate-600 mt-1">Sistema de Tareas</h2>
+          <p className="text-slate-500 text-sm text-center mt-4 mb-6">Ingresá tu correo electrónico para continuar.</p>
           <form onSubmit={handleLogin} className="space-y-4">
             <input
               type="email" required placeholder="Ej: tu-email@gmail.com"
               value={emailInput} onChange={e => setEmailInput(e.target.value)}
-              className="w-full border border-slate-300 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+              className="w-full border-2 border-slate-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:outline-none transition bg-slate-50"
+              style={{focusColor: '#eeb537', focusRingColor: '#eeb537'}}
             />
-            <button type="submit" className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 rounded-lg transition">
-              Entrar al Sistema
+            <button type="submit" className="w-full text-white font-bold py-3 rounded-lg transition hover:shadow-lg transform hover:scale-105" style={{background: 'linear-gradient(135deg, #eeb537 0%, #d4a035 100%)', boxShadow: '0 4px 15px rgba(238, 181, 55, 0.3)'}}>
+              Entrar al Sistema →
             </button>
           </form>
+          <p className="text-center text-xs text-slate-400 mt-6">© 2026 SER&TEC • Todos los derechos reservados</p>
         </div>
       </div>
     );
@@ -242,69 +290,106 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <nav className="bg-blue-900 shadow-lg">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-blue-400 rounded-lg flex items-center justify-center flex-shrink-0">
-              <span className="text-white font-bold text-sm">{usuarioEmail.charAt(0).toUpperCase()}</span>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      <nav className="shadow-lg sticky top-0 z-40" style={{background: 'linear-gradient(to right, #111827, #1f2937)', borderBottomWidth: '4px', borderBottomColor: '#eeb537'}}>
+        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <img src="/sertec-logotipo.png" alt="SER&TEC" className="h-14 w-14 rounded-full shadow-md" style={{boxShadow: '0 0 15px rgba(238, 181, 55, 0.2)'}} />
+              <div className="absolute inset-0 rounded-full" style={{background: 'radial-gradient(circle, rgba(238, 181, 55, 0.1) 0%, transparent 70%)'}}></div>
             </div>
             <div>
-              <h1 className="text-white font-bold text-lg leading-none flex items-center gap-2">
-                Sistema de Tareas
-                {esJefe && <span className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-2 py-0.5 rounded-full">JEFE G{grupoJefe}</span>}
-              </h1>
-              <p className="text-blue-300 text-xs">{usuarioEmail}</p>
+              <h1 className="text-white font-black text-xl tracking-tight">SER&TEC</h1>
+              <p className="text-yellow-300 text-xs font-semibold mt-0.5">Sistema de Tareas {usuarioEmail && `• ${usuarioEmail}`}</p>
             </div>
           </div>
-          <button onClick={handleLogout} className="text-sm text-blue-200 hover:text-white transition">Cerrar Sesión</button>
+          <div className="flex items-center gap-3 justify-between w-full sm:w-auto">
+            {esJefe && (
+              <span className="text-xs font-black uppercase tracking-[0.2em] text-amber-200 bg-gradient-to-r from-amber-600/20 to-orange-600/20 border border-amber-500/50 px-4 py-2 rounded-full shadow-sm" style={{textShadow: '0 1px 2px rgba(0,0,0,0.1)'}}>
+                👤 JEFE G{grupoJefe}
+              </span>
+            )}
+            <button onClick={handleLogout} className="rounded-full border-2 border-amber-400/60 bg-gradient-to-r from-amber-500/15 to-orange-500/15 px-5 py-2 text-sm font-bold text-amber-300 transition hover:bg-amber-500/25 hover:border-amber-400 transform hover:scale-105">
+              Cerrar Sesión
+            </button>
+          </div>
         </div>
       </nav>
 
-      <div className="bg-white border-b border-slate-200 overflow-x-auto">
-        <div className="max-w-6xl mx-auto px-4 flex gap-6 min-w-max">
+      <div className="bg-white border-b-2 sticky top-16 z-30 shadow-sm" style={{borderBottomColor: '#eeb537'}}>
+        <div className="hidden sm:flex max-w-6xl mx-auto px-4 gap-1 overflow-x-auto">
           <button
             onClick={() => setTab('CARGA')}
-            className={`py-4 text-sm font-semibold border-b-2 transition ${tab === 'CARGA' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            className={`py-4 px-6 text-sm font-bold border-b-4 transition-all whitespace-nowrap flex items-center gap-2 ${tab === 'CARGA' ? 'text-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            style={{borderBottomColor: tab === 'CARGA' ? '#eeb537' : 'transparent', backgroundColor: tab === 'CARGA' ? '#f5f3ff' : 'transparent', color: tab === 'CARGA' ? '#eeb537' : undefined}}
           >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m0 0h6m-6 0h-6m0 0H6" />
+            </svg>
             Carga de Tareas
           </button>
           <button
             onClick={() => setTab('HORAS')}
-            className={`py-4 text-sm font-semibold border-b-2 transition ${tab === 'HORAS' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            className={`py-4 px-6 text-sm font-bold border-b-4 transition-all whitespace-nowrap flex items-center gap-2 ${tab === 'HORAS' ? 'text-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+            style={{borderBottomColor: tab === 'HORAS' ? '#eeb537' : 'transparent', backgroundColor: tab === 'HORAS' ? '#f5f3ff' : 'transparent', color: tab === 'HORAS' ? '#eeb537' : undefined}}
           >
-            Mis Horas por Quincena
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Mis Horas
           </button>
           {esJefe && (
             <button
               onClick={() => setTab('JEFATURA')}
-              className={`py-4 text-sm font-semibold border-b-2 transition flex items-center gap-2 ${tab === 'JEFATURA' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              className={`py-4 px-6 text-sm font-bold border-b-4 transition-all whitespace-nowrap flex items-center gap-2 ${tab === 'JEFATURA' ? 'text-white' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              style={{borderBottomColor: tab === 'JEFATURA' ? '#eeb537' : 'transparent', backgroundColor: tab === 'JEFATURA' ? '#f5f3ff' : 'transparent', color: tab === 'JEFATURA' ? '#eeb537' : undefined}}
             >
-              Validación Jefatura 
-              {pendientesJefatura.length > 0 && <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-0.5 rounded-full">{pendientesJefatura.length}</span>}
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+              </svg>
+              Validación
+              {pendientesJefatura.length > 0 && <span className="text-white text-xs font-black px-2 py-0.5 rounded-full ml-1" style={{backgroundColor: '#eeb537'}}>{pendientesJefatura.length}</span>}
             </button>
           )}
         </div>
+        <div className="sm:hidden max-w-6xl mx-auto px-4 py-3">
+          <label htmlFor="mobile-tab" className="sr-only">Seleccionar sección</label>
+          <select
+            id="mobile-tab"
+            value={tab}
+            onChange={(e) => setTab(e.target.value)}
+            className="w-full border-2 border-slate-300 rounded-lg px-4 py-3 text-sm text-slate-700 bg-white font-semibold focus:ring-2 focus:ring-yellow-400 outline-none"
+          >
+            <option value="CARGA">📝 Carga de Tareas</option>
+            <option value="HORAS">📅 Mis Horas por Quincena</option>
+            {esJefe && <option value="JEFATURA">✓ Validación Jefatura</option>}
+          </select>
+        </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+      <main className="max-w-6xl mx-auto px-4 py-10 space-y-8 min-h-screen">
         {mensaje && (
-          <div className={`rounded-lg px-4 py-3 text-sm font-medium shadow transition-all ${
-            mensaje.tipo === 'ok' ? 'bg-green-50 text-green-800 border border-green-200' : 
-            mensaje.tipo === 'warning' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
-            'bg-red-50 text-red-800 border border-red-200'
+          <div className={`rounded-2xl px-5 py-4 text-sm font-bold shadow-lg transition-all transform animate-pulse ${
+            mensaje.tipo === 'ok' ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-300' : 
+            mensaje.tipo === 'warning' ? 'bg-amber-100 text-amber-900 border-2 border-amber-400' :
+            'bg-red-50 text-red-800 border-2 border-red-300'
           }`}>
-            {mensaje.texto}
+            {mensaje.tipo === 'ok' ? '✅' : mensaje.tipo === 'warning' ? '⚠️' : '❌'} {mensaje.texto}
           </div>
         )}
 
         {/* ===================== TAB: CARGA ===================== */}
         {tab === 'CARGA' && (
           <>
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="bg-gradient-to-r from-blue-800 to-blue-600 px-6 py-4">
-                <h2 className="text-white font-semibold text-base">Nueva Tarea</h2>
-                <p className="text-blue-200 text-xs mt-0.5">Completá los datos del día</p>
+            <div className="bg-white rounded-3xl shadow-md border border-slate-200 overflow-hidden">
+              <div className="px-6 py-5" style={{background: 'linear-gradient(135deg, #eeb537 0%, #d4a035 100%)', borderBottomWidth: '0px'}}>
+                <h2 className="text-white font-black text-lg flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5.5 13a3.5 3.5 0 01-.369-6.98 4 4 0 117.753-1.3A4.5 4.5 0 1113.5 13H11V9.413l1.293 1.293a1 1 0 001.414-1.414l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13H5.5z" />
+                  </svg>
+                  Nueva Tarea
+                </h2>
+                <p className="text-yellow-50 text-xs mt-1 font-semibold">Completa los datos del día y guarda</p>
               </div>
 
               <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -382,7 +467,7 @@ function App() {
                     <div className="space-y-4">
                       {contratosElegidos.map(k => (
                         <div key={k} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                          <span className="bg-blue-700 text-white text-xs font-bold px-3 py-1 rounded-full mb-3 inline-block">{k}</span>
+                          <span className="text-white text-xs font-bold px-3 py-1 rounded-full mb-3 inline-block" style={{backgroundColor: '#7c8082'}}>{k}</span>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div className="sm:col-span-2 flex flex-col gap-1">
                               <label className="text-xs font-medium text-slate-500">Tareas</label>
@@ -422,7 +507,7 @@ function App() {
                         </div>
                       ) : <div className="flex-1"></div>}
                       
-                      <button type="submit" disabled={guardando} className="bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-colors flex-shrink-0 w-full sm:w-auto">
+                      <button type="submit" disabled={!formValido || guardando} className="disabled:opacity-60 text-white font-semibold px-8 py-2.5 rounded-lg text-sm transition-colors flex-shrink-0 w-full sm:w-auto hover:shadow-lg" style={{backgroundColor: '#eeb537'}}>
                         {guardando ? 'Guardando...' : 'Guardar Tarea'}
                       </button>
                     </div>
@@ -465,7 +550,81 @@ function App() {
                   </select>
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="sm:hidden space-y-4 p-4">
+                {filtradosReportes.length === 0 ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-500">
+                    No hay registros para este período
+                  </div>
+                ) : filtradosReportes.map((r, i) => {
+                  const totalHs = Number(r.horas_k2||0) + Number(r.horas_k5||0) + Number(r.horas_k6||0) +
+                                  Number(r.horas_k8||0) + Number(r.horas_k9||0) + Number(r.horas_k10||0) +
+                                  Number(r.horas_k11||0) + Number(r.horas_k12||0) + Number(r.horas_otros||0);
+                  const bloqueado = r.estado_g1 === 'APROBADO' || r.estado_g2 === 'APROBADO' || r.estado_g3 === 'APROBADO';
+                  return (
+                    <article key={i} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Fecha</p>
+                          <p className="text-sm font-semibold text-slate-800">{formatFecha(r.dia)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Horas</p>
+                          <p className="text-sm font-semibold" style={{color: '#eeb537'}}>{totalHs}h</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Contratos</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {r.contrato ? r.contrato.split(',').map((c, j) => (
+                              <span key={j} className="px-2 py-0.5 rounded text-[10px] text-white" style={{backgroundColor: '#7c8082'}}>{c.trim()}</span>
+                            )) : <span className="text-slate-400">—</span>}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Estados</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            <BadgeEstado estado={r.estado_g1} grupo={1} />
+                            <BadgeEstado estado={r.estado_g2} grupo={2} />
+                            <BadgeEstado estado={r.estado_g3} grupo={3} />
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-slate-500">Operarios</p>
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {r.operarios_nombres ? r.operarios_nombres.split(',').map((op, j) => (
+                              <span key={j} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px]">{op.trim()}</span>
+                            )) : <span className="text-slate-400">—</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTareaDetalle(r)}
+                          className="flex-1 text-white text-sm font-semibold px-4 py-2 rounded-lg transition hover:shadow-md"
+                          style={{backgroundColor: '#7c8082'}}
+                        >
+                          Ver detalle
+                        </button>
+                        {!bloqueado && (
+                          <button
+                            type="button"
+                            onClick={() => handleEliminar(r.id)}
+                            className="flex-1 bg-red-100 text-red-700 text-sm font-semibold px-4 py-2 rounded-lg hover:bg-red-200 transition"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden sm:overflow-x-auto sm:block">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
@@ -478,71 +637,58 @@ function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(() => {
-                      const filtrados = reportes.filter(r => {
-                        if (!r.dia) return false;
-                        const fechaStr = r.dia.split('T')[0];
-                        const [y, m, dNum] = fechaStr.split('-');
-                        const q = parseInt(dNum, 10) <= 15 ? 1 : 2;
-                        return parseInt(y) === parseInt(anioSeleccionado) && 
-                               parseInt(m) === parseInt(mesSeleccionado) && 
-                               q === parseInt(quincenaSeleccionada);
-                      });
-
-                      if (filtrados.length === 0) {
-                        return <tr><td colSpan="6" className="px-5 py-8 text-center text-slate-400">No hay registros para este período</td></tr>;
-                      }
-
-                      return filtrados.map((r, i) => {
-                      const totalHs = Number(r.horas_k2||0) + Number(r.horas_k5||0) + Number(r.horas_k6||0) + 
-                                      Number(r.horas_k8||0) + Number(r.horas_k9||0) + Number(r.horas_k10||0) + 
+                    {filtradosReportes.length === 0 ? (
+                      <tr><td colSpan="6" className="px-5 py-8 text-center text-slate-400">No hay registros para este período</td></tr>
+                    ) : filtradosReportes.map((r, i) => {
+                      const totalHs = Number(r.horas_k2||0) + Number(r.horas_k5||0) + Number(r.horas_k6||0) +
+                                      Number(r.horas_k8||0) + Number(r.horas_k9||0) + Number(r.horas_k10||0) +
                                       Number(r.horas_k11||0) + Number(r.horas_k12||0) + Number(r.horas_otros||0);
                       const bloqueado = r.estado_g1 === 'APROBADO' || r.estado_g2 === 'APROBADO' || r.estado_g3 === 'APROBADO';
                       return (
-                      <tr key={i} className="hover:bg-blue-50/50 transition-colors">
-                        <td className="px-5 py-3 text-slate-700 font-medium whitespace-nowrap">{formatFecha(r.dia)}</td>
-                        <td className="px-5 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {r.contrato ? r.contrato.split(',').map((c, j) => (<span key={j} className="bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded text-xs">{c.trim()}</span>)) : <span className="text-slate-400">—</span>}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3">
-                          <button 
-                            onClick={() => setTareaDetalle(r)}
-                            className="flex items-center gap-1 text-slate-700 hover:text-blue-600 transition-colors group"
-                            title="Ver detalle"
-                          >
-                            <span className="font-bold">{totalHs}h</span>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        </td>
-                        <td className="px-5 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            <BadgeEstado estado={r.estado_g1} grupo={1} />
-                            <BadgeEstado estado={r.estado_g2} grupo={2} />
-                            <BadgeEstado estado={r.estado_g3} grupo={3} />
-                          </div>
-                        </td>
-                        <td className="px-5 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {r.operarios_nombres ? r.operarios_nombres.split(',').map((op, j) => (<span key={j} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] uppercase font-bold">{op.trim()}</span>)) : <span className="text-slate-400">—</span>}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3 text-center">
-                          {!bloqueado && (
-                            <button onClick={() => handleEliminar(r.id)} className="text-red-500 hover:text-red-700 transition p-1" title="Eliminar">
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        <tr key={i} className="transition-colors" style={{backgroundColor: i % 2 === 0 ? '#f9f7f2' : 'white'}}>
+                          <td className="px-5 py-3 text-slate-700 font-medium whitespace-nowrap">{formatFecha(r.dia)}</td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {r.contrato ? r.contrato.split(',').map((c, j) => (<span key={j} className="font-semibold px-2 py-0.5 rounded text-xs text-white" style={{backgroundColor: '#7c8082'}}>{c.trim()}</span>)) : <span className="text-slate-400">—</span>}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <button
+                              onClick={() => setTareaDetalle(r)}
+                              className="flex items-center gap-1 text-slate-700 transition-colors group"
+                              style={{color: '#7c8082'}}
+                              title="Ver detalle"
+                            >
+                              <span className="font-bold">{totalHs}h</span>
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                               </svg>
                             </button>
-                          )}
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              <BadgeEstado estado={r.estado_g1} grupo={1} />
+                              <BadgeEstado estado={r.estado_g2} grupo={2} />
+                              <BadgeEstado estado={r.estado_g3} grupo={3} />
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-wrap gap-1">
+                              {r.operarios_nombres ? r.operarios_nombres.split(',').map((op, j) => (<span key={j} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] uppercase font-bold">{op.trim()}</span>)) : <span className="text-slate-400">—</span>}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 text-center">
+                            {!bloqueado && (
+                              <button onClick={() => handleEliminar(r.id)} className="text-red-500 hover:text-red-700 transition p-1" title="Eliminar">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
                       );
-                    });
-                  })()}
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -570,7 +716,7 @@ function App() {
                   </div>
                   <div>
                     <span className="block text-xs font-semibold text-slate-500 mb-1">TOTAL HORAS</span>
-                    <span className="font-bold text-blue-700">
+                    <span className="font-bold" style={{color: '#eeb537'}}>
                       {Number(tareaDetalle.horas_k2||0)+Number(tareaDetalle.horas_k5||0)+Number(tareaDetalle.horas_k6||0)+
                        Number(tareaDetalle.horas_k8||0)+Number(tareaDetalle.horas_k9||0)+Number(tareaDetalle.horas_k10||0)+
                        Number(tareaDetalle.horas_k11||0)+Number(tareaDetalle.horas_k12||0)+Number(tareaDetalle.horas_otros||0)}h
@@ -656,30 +802,125 @@ function App() {
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
               <div className="bg-slate-50 border-b border-slate-200 px-6 py-4">
-                <h3 className="font-semibold text-slate-700">Resumen de Horas (Totales en DB)</h3>
+                <h3 className="font-semibold text-slate-700">Calendario de Horas - Quincena {quincenaSeleccionada === 1 ? '1ª (1-15)' : '2ª (16-fin)'} {mesSeleccionado}/{anioSeleccionado}</h3>
               </div>
-              <div className="p-6">
-                {resumenHoras ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {Object.entries(resumenHoras).map(([contrato, horas]) => {
-                      if (horas === null) return null;
-                      return (
-                        <div key={contrato} className="border border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50">
-                          <span className="text-xs font-bold text-slate-500 mb-1">{contrato}</span>
-                          <span className="text-2xl font-black text-blue-700">{horas}</span>
-                          <span className="text-[10px] text-slate-400 uppercase tracking-wide">Horas</span>
-                        </div>
-                      )
-                    })}
-                    {Object.values(resumenHoras).every(x => x === null) && (
-                      <div className="col-span-4 text-center text-slate-500 py-8">
-                        No hay horas registradas en esta quincena.
+              <div className="p-6 space-y-6">
+                {(() => {
+                  const y = parseInt(anioSeleccionado, 10);
+                  const m = parseInt(mesSeleccionado, 10);
+                  const q = parseInt(quincenaSeleccionada, 10);
+                  
+                  const diasEnMes = new Date(y, m, 0).getDate();
+                  const inicio = q === 1 ? 1 : 16;
+                  const fin = q === 1 ? 15 : diasEnMes;
+                  
+                  const diasConHoras = {};
+                  reportes.forEach(r => {
+                    if (r.dia) {
+                      const fechaStr = r.dia.split('T')[0];
+                      const [ry, rm, rd] = fechaStr.split('-');
+                      if (parseInt(ry) === y && parseInt(rm) === m) {
+                        const totalHs = Number(r.horas_k2||0) + Number(r.horas_k5||0) + Number(r.horas_k6||0) +
+                                        Number(r.horas_k8||0) + Number(r.horas_k9||0) + Number(r.horas_k10||0) +
+                                        Number(r.horas_k11||0) + Number(r.horas_k12||0) + Number(r.horas_otros||0);
+                        if (totalHs > 0) {
+                          diasConHoras[`${y}-${String(m).padStart(2, '0')}-${String(rd).padStart(2, '0')}`] = totalHs;
+                        }
+                      }
+                    }
+                  });
+                  
+                  const diasDelMes = [];
+                  for (let d = inicio; d <= fin; d++) {
+                    const fechaObj = new Date(y, m - 1, d);
+                    const diaSemana = fechaObj.getDay();
+                    const fechaStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                    const tieneHoras = diasConHoras[fechaStr] || 0;
+                    const esFeriado = feriadosQ[fechaStr] || false;
+                    const esDomingoOFeriado = diaSemana === 0 || esFeriado;
+                    
+                    diasDelMes.push({
+                      dia: d,
+                      fechaStr,
+                      diaSemana,
+                      tieneHoras,
+                      esFeriado,
+                      esDomingoOFeriado,
+                      fechaObj
+                    });
+                  }
+                  
+                  const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                  
+                  return (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-7 gap-2 text-center">
+                        {diasSemana.map(ds => (
+                          <div key={ds} className="text-xs font-bold text-slate-500 py-2">{ds}</div>
+                        ))}
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-center text-slate-400 py-8">Cargando horas...</p>
-                )}
+                      
+                      <div className="grid grid-cols-7 gap-2">
+                        {diasDelMes.map(d => {
+                          let bgColor = 'bg-white border-slate-200';
+                          let textColor = 'text-slate-700';
+                          let horasColor = 'text-blue-700';
+                          
+                          if (d.esFeriado) {
+                            bgColor = 'bg-purple-50 border-purple-300';
+                            textColor = 'text-purple-700';
+                          } else if (d.tieneHoras > 0) {
+                            bgColor = 'bg-green-50 border-green-300';
+                            textColor = 'text-green-700';
+                            horasColor = 'text-green-600';
+                          } else if (d.esDomingoOFeriado) {
+                            bgColor = 'bg-slate-50 border-slate-200';
+                            textColor = 'text-slate-500';
+                          }
+                          
+                          return (
+                            <button
+                              key={d.dia}
+                              onClick={() => {
+                                setFeriadosQ(prev => ({
+                                  ...prev,
+                                  [d.fechaStr]: !prev[d.fechaStr]
+                                }));
+                              }}
+                              title={`${d.tieneHoras > 0 ? d.tieneHoras + ' hs cargadas' : 'Click para marcar como feriado'}`}
+                              className={`border-2 rounded-lg p-3 flex flex-col items-center justify-center text-sm font-semibold transition ${bgColor} ${textColor} hover:shadow-md`}
+                            >
+                              <span className="text-lg">{d.dia}</span>
+                              {d.tieneHoras > 0 && <span className={`text-[10px] font-bold ${horasColor}`}>{d.tieneHoras}h</span>}
+                              {d.esFeriado && <span className="text-[10px] font-bold">FERIADO</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      
+                      <div className="mt-4 pt-4 border-t border-slate-200">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          {resumenHoras ? Object.entries(resumenHoras).map(([contrato, horas]) => {
+                            if (horas === null) return null;
+                            return (
+                              <div key={contrato} className="border border-slate-200 rounded-xl p-4 flex flex-col items-center justify-center text-center bg-slate-50">
+                                <span className="text-xs font-bold text-slate-500 mb-1">{contrato}</span>
+                                <span className="text-2xl font-black text-blue-700">{horas}</span>
+                                <span className="text-[10px] text-slate-400 uppercase tracking-wide">Horas</span>
+                              </div>
+                            );
+                          }) : <p className="text-center text-slate-400 col-span-4">Cargando horas...</p>}
+                        </div>
+                      </div>
+                      
+                      <div className="mt-4 pt-4 border-t border-slate-200 text-xs text-slate-500 space-y-1">
+                        <p><span className="inline-block w-4 h-4 bg-green-50 border-2 border-green-300 rounded mr-2"></span>Días con horas cargadas</p>
+                        <p><span className="inline-block w-4 h-4 bg-purple-50 border-2 border-purple-300 rounded mr-2"></span>Feriados (click para marcar/desmarcar)</p>
+                        <p><span className="inline-block w-4 h-4 bg-slate-50 border-2 border-slate-200 rounded mr-2"></span>Domingos (no laboral)</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -698,7 +939,73 @@ function App() {
               </span>
             </div>
             
-            <div className="overflow-x-auto">
+            <div className="sm:hidden space-y-4 p-4">
+              {pendientesJefatura.length === 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center text-amber-700">
+                  ¡Estás al día! No hay tareas pendientes de validación.
+                </div>
+              ) : pendientesJefatura.map((r) => {
+                const actualizarHoras = (contrato, val) => {
+                  setCorreccionesJefatura(prev => ({
+                    ...prev, [r.id]: { ...prev[r.id], [contrato]: val }
+                  }));
+                };
+
+                const renderInputHora = (contratoKey) => {
+                  const val = correccionesJefatura[r.id]?.[contratoKey] ?? 0;
+                  if (val === 0 && r[`horas_${contratoKey.toLowerCase()}`] === 0) return null;
+                  return (
+                    <div key={contratoKey} className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 w-14">{contratoKey}:</span>
+                      <input
+                        type="number" min="0" step="0.5"
+                        className="w-20 px-2 py-1 text-xs border border-amber-300 rounded focus:ring-1 focus:ring-amber-500 outline-none"
+                        value={val}
+                        onChange={(e) => actualizarHoras(contratoKey, e.target.value)}
+                      />
+                      <span className="text-[10px] text-slate-400">hs</span>
+                    </div>
+                  );
+                };
+
+                let contratosAMostrar = [];
+                if (grupoJefe === 1) contratosAMostrar = ['K2','K6','K12'];
+                if (grupoJefe === 2) contratosAMostrar = ['K5','K8','K11'];
+                if (grupoJefe === 3) contratosAMostrar = ['K9','K10','OTROS'];
+
+                return (
+                  <article key={r.id} className="rounded-3xl border border-amber-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Fecha</p>
+                        <p className="text-sm font-semibold text-slate-800">{formatFecha(r.dia)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs uppercase tracking-wide text-slate-500">Operario</p>
+                        <p className="text-sm font-semibold text-blue-700">{r.operario_email}</p>
+                      </div>
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">Contrato</p>
+                      <p className="mt-1 font-semibold text-slate-700">{r.contrato}</p>
+                    </div>
+                    <div className="mt-4 grid gap-3">
+                      {contratosAMostrar.map(c => renderInputHora(c))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button onClick={() => handleValidarTarea(r.id, 'APROBADO')} className="flex-1 bg-green-100 text-green-700 hover:bg-green-600 hover:text-white px-4 py-2 rounded text-sm font-bold transition">
+                        ✓ APROBAR
+                      </button>
+                      <button onClick={() => handleValidarTarea(r.id, 'RECHAZADO')} className="flex-1 bg-red-100 text-red-700 hover:bg-red-600 hover:text-white px-4 py-2 rounded text-sm font-bold transition">
+                        ✗ RECHAZAR
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="hidden sm:overflow-x-auto sm:block">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
@@ -722,7 +1029,6 @@ function App() {
                     const renderInputHora = (contratoKey) => {
                       const val = correccionesJefatura[r.id]?.[contratoKey] ?? 0;
                       if (val === 0 && r[`horas_${contratoKey.toLowerCase()}`] === 0) return null; // No cargó horas de esto
-                      
                       return (
                         <div key={contratoKey} className="flex items-center gap-1">
                           <span className="text-[10px] font-bold text-slate-500 w-12">{contratoKey}:</span>
